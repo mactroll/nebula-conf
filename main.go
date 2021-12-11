@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"time"
@@ -202,7 +203,7 @@ func issueCertCreate(w http.ResponseWriter, r *http.Request, config ConfigFile) 
 
 	log.Println(email)
 	log.Println(certRequest.PubKey)
-	err = os.WriteFile("/tmp/dat1", []byte(certRequest.PubKey), 0644)
+	//err = os.WriteFile("/tmp/dat1", []byte(certRequest.PubKey), 0644)
 }
 
 // Get JWKS for validating tokens
@@ -279,6 +280,35 @@ func verifyToken(bearerToken string, config ConfigFile) (string, error) {
 	log.Println("ID Token is valid!")
 
 	return out["email"].(string), nil
+}
+
+// make a temp directory, pass in the pubkey, sign in, get the cert back
+
+func signPubKey(pubKey string, name string, config ConfigFile) *string {
+
+	tempDir, err := ioutil.TempDir("", "nebula-temp*")
+	if err != nil {
+		log.Fatal(err)
+		return nil
+	}
+	defer os.RemoveAll(tempDir)
+
+	pubKeyFile, err := ioutil.TempFile(tempDir, "pubkey*")
+	if err != nil {
+		log.Fatal(err)
+		return nil
+	}
+
+	log.Println(pubKeyFile)
+
+	cmd := exec.Command("nebula-cert sign -")
+
+	err = cmd.Run()
+
+	if err != nil {
+		log.Fatal(err)
+	}
+	return nil
 }
 
 // NewRouter generates the router used in the HTTP Server
