@@ -1,0 +1,10 @@
+auth:
+  discoveryurl: "https://key.jclab.dev/auth/realms/jclab/.well-known/openid-configuration"
+  clientid: smallstep
+  redirecturi: "dev.jclab.skeletonkey://redirect"
+  caurl: "https://nebula.jclab.dev/issuecert"
+ca:
+  cakeyfile: "/etc/nebula/ca/ca.key"
+  cacertfile: "/etc/nubula/ca/ca.crt"
+  jwksurl: "https://key.jclab.dev/auth/realms/jclab/protocol/openid-connect/certs"
+

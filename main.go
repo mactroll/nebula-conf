@@ -36,7 +36,8 @@ type ConfigFile struct {
 }
 
 type IssueCertRequest struct {
-	Token string
+	Token  string
+	PubKey string
 }
 
 type CustomClaims struct {
@@ -193,10 +194,15 @@ func issueCertCreate(w http.ResponseWriter, r *http.Request, config ConfigFile) 
 		return
 	}
 
-	tokenerr := verifyToken(certRequest.Token, config)
+	email, tokenerr := verifyToken(certRequest.Token, config)
 	if tokenerr != nil {
 		log.Println(tokenerr)
+		return
 	}
+
+	log.Println(email)
+	log.Println(certRequest.PubKey)
+	err = os.WriteFile("/tmp/dat1", []byte(certRequest.PubKey), 0644)
 }
 
 // Get JWKS for validating tokens
@@ -234,17 +240,18 @@ func fetchJwks(jwksURL string) (*jose.JSONWebKeySet, error) {
 	return &jwks, nil
 }
 
-func verifyToken(bearerToken string, config ConfigFile) error {
+func verifyToken(bearerToken string, config ConfigFile) (string, error) {
+
 	// Parse bearer token from request
 	token, err := jwt.ParseSigned(bearerToken)
 	if err != nil {
-		return fmt.Errorf("could not parse Bearer token: %w", err)
+		return "", fmt.Errorf("could not parse Bearer token: %w", err)
 	}
 
 	// Get jwks
 	jsonWebKeySet, err := fetchJwks(config.CAConfig.JWKSURL)
 	if err != nil {
-		return fmt.Errorf("could not load JWKS: %w", err)
+		return "", fmt.Errorf("could not load JWKS: %w", err)
 	}
 
 	out := make(map[string]interface{})
@@ -256,21 +263,22 @@ func verifyToken(bearerToken string, config ConfigFile) error {
 	claims := CustomClaims{}
 	err = token.Claims(jsonWebKeySet, &claims)
 	if err != nil {
-		return fmt.Errorf("could not retrieve claims: %w", err)
+		return "", fmt.Errorf("could not retrieve claims: %w", err)
 	}
 
 	// Validate claims (issuer, expiresAt, etc.)
 	err = claims.Validate(jwt.Expected{})
 	if err != nil {
-		return fmt.Errorf("could not validate claims: %w", err)
+		return "", fmt.Errorf("could not validate claims: %w", err)
 	}
 
 	if !claims.Audience.Contains(config.AuthConfig.ClientID) {
-		return fmt.Errorf("Wrong audience for token")
+		return "", errors.New("Wrong audience for token") //fmt.Errorf("Wrong audience for token")
 	}
+
 	log.Println("ID Token is valid!")
 
-	return nil
+	return out["email"].(string), nil
 }
 
 // NewRouter generates the router used in the HTTP Server
