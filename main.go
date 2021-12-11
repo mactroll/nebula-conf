@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	//"github.com/mactroll/nebula-config/badgermgr"
+
 	"github.com/golang/gddo/httputil/header"
 	"gopkg.in/square/go-jose.v2"
 	"gopkg.in/square/go-jose.v2/jwt"
@@ -201,9 +203,12 @@ func issueCertCreate(w http.ResponseWriter, r *http.Request, config ConfigFile) 
 		return
 	}
 
+	formattedKey := "-----BEGIN NEBULA X25519 PUBLIC KEY-----\n" + certRequest.PubKey + "\n-----END NEBULA X25519 PUBLIC KEY-----\n"
 	log.Println(email)
 	log.Println(certRequest.PubKey)
-	//err = os.WriteFile("/tmp/dat1", []byte(certRequest.PubKey), 0644)
+
+	certificate := signPubKey(formattedKey, email, config)
+	log.Println(certificate)
 }
 
 // Get JWKS for validating tokens
@@ -299,9 +304,16 @@ func signPubKey(pubKey string, name string, config ConfigFile) *string {
 		return nil
 	}
 
-	log.Println(pubKeyFile)
+	certFile, err := ioutil.TempFile(tempDir, "certFile*")
+	if err != nil {
+		log.Fatal(err)
+		return nil
+	}
 
-	cmd := exec.Command("nebula-cert sign -")
+	pubKeyFile.Write([]byte(pubKey))
+	log.Println(pubKeyFile.Name())
+
+	cmd := exec.Command("/usr/local/bin/nebula-cert", "sign", "-ca-crt", config.CAConfig.CACertFile, "-ca-key", config.CAConfig.CAKeyFile, "-in-pub", pubKeyFile.Name(), "-name", name, "-ip", "\"192.168.100.50/16\"", "-out-crt", certFile.Name())
 
 	err = cmd.Run()
 
@@ -407,6 +419,8 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Printf("DiscoveryURL: %v", cfg.AuthConfig.DiscoveryURL)
+
+	badgermgr.OpenDatabase()
 
 	// Run the server
 	cfg.run()
