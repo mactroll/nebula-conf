@@ -51,6 +51,8 @@ type CustomClaims struct {
 	email map[string]interface{}
 }
 
+var debugMode bool
+
 // NewConfig returns a new decoded Config struct
 func NewConfig(configPath string) (*ConfigFile, error) {
 	// Create config structure
@@ -96,6 +98,7 @@ func ParseFlags() (string, error) {
 	// Set up a CLI flag called "-config" to allow users
 	// to supply the configuration file
 	flag.StringVar(&configPath, "config", "./config.yml", "path to config file")
+	flag.BoolVar(&debugMode, "debug", false, "Enable debug mode")
 
 	// Actually parse the flags
 	flag.Parse()
@@ -200,9 +203,14 @@ func issueCertCreate(w http.ResponseWriter, r *http.Request, config ConfigFile) 
 	}
 
 	email, tokenerr := verifyToken(certRequest.Token, config)
-	if tokenerr != nil {
+	if !tokenerr && !debugMode {
 		log.Println(tokenerr)
 		return
+	}
+
+	if email == "" && debugMode {
+		log.Println("Adding a debug name for the cert")
+		email = "TESTING-NOTVALID"
 	}
 
 	formattedKey := "-----BEGIN NEBULA X25519 PUBLIC KEY-----\n" + certRequest.PubKey + "\n-----END NEBULA X25519 PUBLIC KEY-----\n"
@@ -210,7 +218,7 @@ func issueCertCreate(w http.ResponseWriter, r *http.Request, config ConfigFile) 
 	log.Println(certRequest.PubKey)
 
 	certificate := signPubKey(formattedKey, email, config)
-	log.Println(certificate)
+	fmt.Fprintf(w, "%s\n", certificate)
 }
 
 // Get JWKS for validating tokens
@@ -248,89 +256,101 @@ func fetchJwks(jwksURL string) (*jose.JSONWebKeySet, error) {
 	return &jwks, nil
 }
 
-func verifyToken(bearerToken string, config ConfigFile) (string, error) {
+func verifyToken(bearerToken string, config ConfigFile) (string, bool) {
 
 	// Parse bearer token from request
 	token, err := jwt.ParseSigned(bearerToken)
 	if err != nil {
-		return "", fmt.Errorf("could not parse Bearer token: %w", err)
+		log.Println("could not parse Bearer token: %w", err)
+		return "", false
 	}
 
 	// Get jwks
 	jsonWebKeySet, err := fetchJwks(config.CAConfig.JWKSURL)
 	if err != nil {
-		return "", fmt.Errorf("could not load JWKS: %w", err)
+		log.Println("could not load JWKS: %w", err)
+		return "", false
 	}
 
 	out := make(map[string]interface{})
 	if err := token.Claims(jsonWebKeySet, &out); err != nil {
 		panic(err)
+		return "", false
 	}
 
 	// Get claims out of token (validate signature while doing that)
 	claims := CustomClaims{}
 	err = token.Claims(jsonWebKeySet, &claims)
 	if err != nil {
-		return "", fmt.Errorf("could not retrieve claims: %w", err)
+		log.Println("could not retrieve claims: %w", err)
+		return "", false
 	}
 
 	// Validate claims (issuer, expiresAt, etc.)
 	err = claims.Validate(jwt.Expected{})
 	if err != nil {
-		return "", fmt.Errorf("could not validate claims: %w", err)
+		log.Println("could not validate claims: %w", err)
+		return "", false
 	}
 
 	if !claims.Audience.Contains(config.AuthConfig.ClientID) {
-		return "", errors.New("Wrong audience for token") //fmt.Errorf("Wrong audience for token")
+		log.Println("Wrong audience for token") //fmt.Errorf("Wrong audience for token")
+		return "", false
 	}
 
 	if claims.Expiry.Time().Before(time.Now()) {
-		return "", errors.New("Token has expired") //fmt.Errorf("Token has expired")
+		log.Println("Token has expired") //fmt.Errorf("Token has expired")
+		return "", false
 	}
 
 	if claims.IssuedAt.Time().After(time.Now()) {
-		return "", errors.New("Token hasn't been issued yet")
+		log.Println("Token hasn't been issued yet")
+		return "", false
 	}
 
 	log.Println("ID Token is valid!")
 
-	return out["email"].(string), nil
+	return out["email"].(string), true
 }
 
 // make a temp directory, pass in the pubkey, sign in, get the cert back
 
-func signPubKey(pubKey string, name string, config ConfigFile) *string {
+func signPubKey(pubKey string, name string, config ConfigFile) string {
 
 	tempDir, err := ioutil.TempDir("", "nebula-temp*")
 	if err != nil {
 		log.Fatal(err)
-		return nil
+		return ""
 	}
 	defer os.RemoveAll(tempDir)
 
 	pubKeyFile, err := ioutil.TempFile(tempDir, "pubkey*")
 	if err != nil {
 		log.Fatal(err)
-		return nil
-	}
-
-	certFile, err := ioutil.TempFile(tempDir, "certFile*")
-	if err != nil {
-		log.Fatal(err)
-		return nil
+		return ""
 	}
 
 	pubKeyFile.Write([]byte(pubKey))
 	log.Println(pubKeyFile.Name())
 
-	cmd := exec.Command("/usr/local/bin/nebula-cert", "sign", "-ca-crt", config.CAConfig.CACertFile, "-ca-key", config.CAConfig.CAKeyFile, "-in-pub", pubKeyFile.Name(), "-name", name, "-ip", "\"192.168.100.50/16\"", "-out-crt", certFile.Name())
+	cmd := exec.Command("/usr/local/bin/nebula-cert", "sign", "-ca-crt", config.CAConfig.CACertFile, "-ca-key", config.CAConfig.CAKeyFile, "-in-pub", pubKeyFile.Name(), "-name", name, "-ip", "192.168.100.50/16", "-out-crt", tempDir+"/certificate")
+
+	if debugMode {
+		log.Println(cmd.Args)
+	}
 
 	err = cmd.Run()
 
 	if err != nil {
 		log.Fatal(err)
 	}
-	return nil
+
+	dat, err := os.ReadFile(tempDir + "/certificate")
+	if err == nil {
+		return string(dat)
+	}
+
+	return ""
 }
 
 // NewRouter generates the router used in the HTTP Server
