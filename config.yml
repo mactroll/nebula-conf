@@ -7,4 +7,5 @@ ca:
   cakeyfile: "/etc/nebula/ca/ca.key"
   cacertfile: "/etc/nubula/ca/ca.crt"
   jwksurl: "https://key.jclab.dev/auth/realms/jclab/protocol/openid-connect/certs"
-
+db:
+  path: "/etc/nebula/db"

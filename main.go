@@ -16,9 +16,8 @@ import (
 	"strings"
 	"time"
 
-	//"github.com/mactroll/nebula-config/badgermgr"
-
 	"github.com/golang/gddo/httputil/header"
+	"github.com/mactroll/nebula-config/badgermgr"
 	"gopkg.in/square/go-jose.v2"
 	"gopkg.in/square/go-jose.v2/jwt"
 	"gopkg.in/yaml.v2"
@@ -36,6 +35,9 @@ type ConfigFile struct {
 		CACertFile string `yaml:"cacertfile`
 		JWKSURL    string `yaml:"jwksurl"`
 	} `yaml:"ca"`
+	DBConfig struct {
+		DBPath string `yaml:"path"`
+	} `yaml:"db"`
 }
 
 type IssueCertRequest struct {
@@ -282,6 +284,14 @@ func verifyToken(bearerToken string, config ConfigFile) (string, error) {
 		return "", errors.New("Wrong audience for token") //fmt.Errorf("Wrong audience for token")
 	}
 
+	if claims.Expiry.Time().Before(time.Now()) {
+		return "", errors.New("Token has expired") //fmt.Errorf("Token has expired")
+	}
+
+	if claims.IssuedAt.Time().After(time.Now()) {
+		return "", errors.New("Token hasn't been issued yet")
+	}
+
 	log.Println("ID Token is valid!")
 
 	return out["email"].(string), nil
@@ -420,7 +430,7 @@ func main() {
 	}
 	log.Printf("DiscoveryURL: %v", cfg.AuthConfig.DiscoveryURL)
 
-	badgermgr.OpenDatabase()
+	badgermgr.OpenDatabase(cfg.DBConfig.DBPath)
 
 	// Run the server
 	cfg.run()

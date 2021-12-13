@@ -7,10 +7,12 @@ import (
 )
 
 var dbpath string
+var db *badger.DB
+var err error
 
 func OpenDatabase(path string) {
 	dbpath = path
-	db, err := badger.Open(badger.DefaultOptions(dbpath))
+	db, err = badger.Open(badger.DefaultOptions(dbpath))
 	if err != nil {
 		log.Fatal(err)
 	}
