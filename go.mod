@@ -30,6 +30,7 @@ require (
 require (
 	github.com/dgraph-io/badger/v3 v3.2103.2
 	github.com/golang/gddo v0.0.0-20210115222349-20d68f94ee1f
+	github.com/google/uuid v1.3.0
 	github.com/lestrrat-go/jwx v1.2.13
 	golang.org/x/crypto v0.0.0-20211209193657-4570a0811e8b // indirect
 )

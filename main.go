@@ -6,6 +6,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+
+	//"go/token"
 	"io"
 	"io/ioutil"
 	"log"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"github.com/golang/gddo/httputil/header"
+	"github.com/google/uuid"
 	"github.com/mactroll/nebula-config/badgermgr"
 	"gopkg.in/square/go-jose.v2"
 	"gopkg.in/square/go-jose.v2/jwt"
@@ -47,8 +50,6 @@ type IssueCertRequest struct {
 
 type CustomClaims struct {
 	*jwt.Claims
-	// additional claims apart from standard claims
-	email map[string]interface{}
 }
 
 var debugMode bool
@@ -202,22 +203,16 @@ func issueCertCreate(w http.ResponseWriter, r *http.Request, config ConfigFile) 
 		return
 	}
 
-	email, tokenerr := verifyToken(certRequest.Token, config)
+	tokenerr := verifyToken(certRequest.Token, config)
 	if !tokenerr && !debugMode {
 		log.Println(tokenerr)
 		return
 	}
 
-	if email == "" && debugMode {
-		log.Println("Adding a debug name for the cert")
-		email = "TESTING-NOTVALID"
-	}
-
 	formattedKey := "-----BEGIN NEBULA X25519 PUBLIC KEY-----\n" + certRequest.PubKey + "\n-----END NEBULA X25519 PUBLIC KEY-----\n"
-	log.Println(email)
 	log.Println(certRequest.PubKey)
 
-	certificate := signPubKey(formattedKey, email, config)
+	certificate := signPubKey(formattedKey, config)
 	fmt.Fprintf(w, "%s\n", certificate)
 }
 
@@ -256,26 +251,26 @@ func fetchJwks(jwksURL string) (*jose.JSONWebKeySet, error) {
 	return &jwks, nil
 }
 
-func verifyToken(bearerToken string, config ConfigFile) (string, bool) {
+func verifyToken(bearerToken string, config ConfigFile) bool {
 
 	// Parse bearer token from request
 	token, err := jwt.ParseSigned(bearerToken)
 	if err != nil {
 		log.Println("could not parse Bearer token: %w", err)
-		return "", false
+		return false
 	}
 
 	// Get jwks
 	jsonWebKeySet, err := fetchJwks(config.CAConfig.JWKSURL)
 	if err != nil {
 		log.Println("could not load JWKS: %w", err)
-		return "", false
+		return false
 	}
 
 	out := make(map[string]interface{})
 	if err := token.Claims(jsonWebKeySet, &out); err != nil {
 		panic(err)
-		return "", false
+		return false
 	}
 
 	// Get claims out of token (validate signature while doing that)
@@ -283,39 +278,39 @@ func verifyToken(bearerToken string, config ConfigFile) (string, bool) {
 	err = token.Claims(jsonWebKeySet, &claims)
 	if err != nil {
 		log.Println("could not retrieve claims: %w", err)
-		return "", false
+		return false
 	}
 
 	// Validate claims (issuer, expiresAt, etc.)
 	err = claims.Validate(jwt.Expected{})
 	if err != nil {
 		log.Println("could not validate claims: %w", err)
-		return "", false
+		return false
 	}
 
 	if !claims.Audience.Contains(config.AuthConfig.ClientID) {
 		log.Println("Wrong audience for token") //fmt.Errorf("Wrong audience for token")
-		return "", false
+		return false
 	}
 
 	if claims.Expiry.Time().Before(time.Now()) {
 		log.Println("Token has expired") //fmt.Errorf("Token has expired")
-		return "", false
+		return false
 	}
 
 	if claims.IssuedAt.Time().After(time.Now()) {
 		log.Println("Token hasn't been issued yet")
-		return "", false
+		return false
 	}
 
 	log.Println("ID Token is valid!")
 
-	return out["email"].(string), true
+	return true
 }
 
 // make a temp directory, pass in the pubkey, sign in, get the cert back
 
-func signPubKey(pubKey string, name string, config ConfigFile) string {
+func signPubKey(pubKey string, config ConfigFile) string {
 
 	tempDir, err := ioutil.TempDir("", "nebula-temp*")
 	if err != nil {
@@ -333,6 +328,7 @@ func signPubKey(pubKey string, name string, config ConfigFile) string {
 	pubKeyFile.Write([]byte(pubKey))
 	log.Println(pubKeyFile.Name())
 
+	name := uuid.New().String()
 	cmd := exec.Command("/usr/local/bin/nebula-cert", "sign", "-ca-crt", config.CAConfig.CACertFile, "-ca-key", config.CAConfig.CAKeyFile, "-in-pub", pubKeyFile.Name(), "-name", name, "-ip", "192.168.100.50/16", "-out-crt", tempDir+"/certificate")
 
 	if debugMode {
@@ -347,6 +343,11 @@ func signPubKey(pubKey string, name string, config ConfigFile) string {
 
 	dat, err := os.ReadFile(tempDir + "/certificate")
 	if err == nil {
+		newrec := badgermgr.CertRecord{PubKey: pubKey}
+		err = badgermgr.WriteCertRecord(name, newrec)
+		if err != nil {
+			log.Println("Error writing record into badger")
+		}
 		return string(dat)
 	}
 
@@ -451,7 +452,7 @@ func main() {
 	log.Printf("DiscoveryURL: %v", cfg.AuthConfig.DiscoveryURL)
 
 	badgermgr.OpenDatabase(cfg.DBConfig.DBPath)
-
+	badgermgr.GetAllKeys()
 	// Run the server
 	cfg.run()
 }
