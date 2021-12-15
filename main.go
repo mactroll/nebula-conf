@@ -41,6 +41,9 @@ type ConfigFile struct {
 	DBConfig struct {
 		DBPath string `yaml:"path"`
 	} `yaml:"db"`
+	ClientConfig struct {
+		StartingIP string `yaml:"startingip"`
+	} `yaml:"clients"`
 }
 
 type IssueCertRequest struct {
@@ -212,7 +215,7 @@ func issueCertCreate(w http.ResponseWriter, r *http.Request, config ConfigFile) 
 	formattedKey := "-----BEGIN NEBULA X25519 PUBLIC KEY-----\n" + certRequest.PubKey + "\n-----END NEBULA X25519 PUBLIC KEY-----\n"
 	log.Println(certRequest.PubKey)
 
-	certificate := signPubKey(formattedKey, config)
+	certificate := signPubKey(formattedKey, config, certRequest.Token)
 	fmt.Fprintf(w, "%s\n", certificate)
 }
 
@@ -310,7 +313,7 @@ func verifyToken(bearerToken string, config ConfigFile) bool {
 
 // make a temp directory, pass in the pubkey, sign in, get the cert back
 
-func signPubKey(pubKey string, config ConfigFile) string {
+func signPubKey(pubKey string, config ConfigFile, token string) string {
 
 	tempDir, err := ioutil.TempDir("", "nebula-temp*")
 	if err != nil {
@@ -328,8 +331,11 @@ func signPubKey(pubKey string, config ConfigFile) string {
 	pubKeyFile.Write([]byte(pubKey))
 	log.Println(pubKeyFile.Name())
 
+	ip := badgermgr.GetIPAddress()
+	log.Printf(ip)
+
 	name := uuid.New().String()
-	cmd := exec.Command("/usr/local/bin/nebula-cert", "sign", "-ca-crt", config.CAConfig.CACertFile, "-ca-key", config.CAConfig.CAKeyFile, "-in-pub", pubKeyFile.Name(), "-name", name, "-ip", "192.168.100.50/16", "-out-crt", tempDir+"/certificate")
+	cmd := exec.Command("/usr/local/bin/nebula-cert", "sign", "-ca-crt", config.CAConfig.CACertFile, "-ca-key", config.CAConfig.CAKeyFile, "-in-pub", pubKeyFile.Name(), "-name", name, "-ip", ip+"/16", "-out-crt", tempDir+"/certificate")
 
 	if debugMode {
 		log.Println(cmd.Args)
@@ -343,7 +349,7 @@ func signPubKey(pubKey string, config ConfigFile) string {
 
 	dat, err := os.ReadFile(tempDir + "/certificate")
 	if err == nil {
-		newrec := badgermgr.CertRecord{PubKey: pubKey}
+		newrec := badgermgr.CertRecord{PubKey: pubKey, IPAddr: ip, Token: token}
 		err = badgermgr.WriteCertRecord(name, newrec)
 		if err != nil {
 			log.Println("Error writing record into badger")
@@ -451,8 +457,12 @@ func main() {
 	}
 	log.Printf("DiscoveryURL: %v", cfg.AuthConfig.DiscoveryURL)
 
-	badgermgr.OpenDatabase(cfg.DBConfig.DBPath)
-	badgermgr.GetAllKeys()
+	badgermgr.OpenDatabase(cfg.DBConfig.DBPath, cfg.ClientConfig.StartingIP)
+
+	if debugMode {
+		badgermgr.GetAllKeys()
+	}
+
 	// Run the server
 	cfg.run()
 }
